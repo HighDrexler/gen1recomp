@@ -1,16 +1,16 @@
 name: One-shot mobile direct-import validator
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/mobile-required-import-streaming-v2
+      - dev
 
 permissions:
   contents: write
 
 jobs:
   apply-and-validate:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/mobile-required-import-streaming-v2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,7 @@ jobs:
       - name: Publish validated source changes
         run: |
           rm tools/apply_mobile_direct_required_import.py
+          rm -f tools/mobile-direct-import-trigger.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
