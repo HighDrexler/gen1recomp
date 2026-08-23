@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+# Normalize over-escaped newline literals introduced while staging the patch.
 p = Path('tools/apply_mobile_required_import_patch.py')
 s = p.read_text(encoding='utf-8')
 replacements = {
