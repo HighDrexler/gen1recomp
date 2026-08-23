@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
-# Normalize over-escaped newline literals introduced while staging the patch.
+# Normalize over-escaped literals introduced while staging the patch and make
+# the Java destination replacement resilient to backslash escaping.
 p = Path('tools/apply_mobile_required_import_patch.py')
 s = p.read_text(encoding='utf-8')
 replacements = {
@@ -16,5 +17,20 @@ replacements = {
 for old, new in replacements.items():
     if old in s:
         s = s.replace(old, new)
+
+needle = 's = replace_once(s, old, new, "GameActivity safe nested destination")'
+replacement = '''start = s.find("        // Reject path separators so a hostile JNI caller cannot escape the")
+if start < 0:
+    raise SystemExit("GameActivity safe nested destination: start anchor missing")
+end_marker = "        self.pendingPickFilename = destFilename;\\n"
+end = s.find(end_marker, start)
+if end < 0:
+    raise SystemExit("GameActivity safe nested destination: end anchor missing")
+end += len(end_marker)
+s = s[:start] + new + s[end:]'''
+if needle not in s:
+    raise SystemExit('patch helper: Java safe-destination call missing')
+s = s.replace(needle, replacement, 1)
+
 p.write_text(s, encoding='utf-8')
-print('fixed patch-script newline escapes')
+print('fixed patch-script escapes/anchors')
