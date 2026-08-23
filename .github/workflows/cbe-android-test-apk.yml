@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/build_android.sh mobile/android/gradlew
-          scripts/build_android.sh --version 0.0.0
+          scripts/build_android.sh --version 0.0.1
 
       - name: Stage test APK
         shell: bash
