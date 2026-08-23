@@ -18,6 +18,12 @@ jobs:
           ref: fix/mobile-required-import-streaming-v2
           fetch-depth: 0
 
+      - name: Normalize staged patch
+        run: |
+          if [ -f tools/fix_mobile_direct_patch_scope.py ]; then
+            python3 tools/fix_mobile_direct_patch_scope.py
+          fi
+
       - name: Apply direct mobile required-import patch
         run: python3 tools/apply_mobile_direct_required_import.py
 
@@ -47,6 +53,7 @@ jobs:
       - name: Publish validated source changes
         run: |
           rm tools/apply_mobile_direct_required_import.py
+          rm -f tools/fix_mobile_direct_patch_scope.py
           rm -f tools/mobile-direct-import-trigger.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
