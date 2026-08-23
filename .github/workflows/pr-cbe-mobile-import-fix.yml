@@ -18,6 +18,9 @@ jobs:
           ref: fix/mobile-required-import-streaming
           fetch-depth: 0
 
+      - name: Normalize patch helper
+        run: python3 tools/fix_mobile_patch_script.py
+
       - name: Apply patch
         run: python3 tools/apply_mobile_required_import_patch.py
 
@@ -42,6 +45,7 @@ jobs:
       - name: Commit tested branch
         run: |
           rm tools/apply_mobile_required_import_patch.py
+          rm tools/fix_mobile_patch_script.py
           rm .github/workflows/cbe-mobile-required-import-patch.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
