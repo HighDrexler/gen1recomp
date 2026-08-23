@@ -1,0 +1,54 @@
+name: One-shot mobile direct-import validator
+
+on:
+  push:
+    branches:
+      - fix/mobile-required-import-streaming-v2
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/mobile-required-import-streaming-v2
+          fetch-depth: 0
+
+      - name: Apply direct mobile required-import patch
+        run: python3 tools/apply_mobile_direct_required_import.py
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luajit
+
+      - name: Run targeted import regressions
+        run: |
+          luajit tests/rom_importer_android_mod_pick_test.lua
+          luajit tests/engine/stream_md5_test.lua
+          luajit tests/engine/required_import_streaming_test.lua
+          luajit tests/engine/mod_import_access_test.lua
+          luajit tests/engine/mod_import_access_parity_test.lua
+          python3 -m py_compile mobile/ios/patch_love_src.py
+
+      - name: Check native bridge invariants
+        run: |
+          grep -q 'gen1recomp-required-import' mobile/android/love/src/main/java/org/love2d/android/GameActivity.java
+          grep -q 'pick_complete.flag' mobile/android/love/src/main/java/org/love2d/android/GameActivity.java
+          grep -q 'isDirectRequiredDestination' mobile/android/love/src/main/java/org/love2d/android/GameActivity.java
+          grep -q 'presentPickerWithKind:saveDir:destination:' mobile/ios/patch_love_src.py
+          grep -q 'copyRequiredItemAsync' mobile/ios/native/GRPickerBridge.swift
+          grep -q 'PICK_COMPLETE_FILENAME' src/import/RomImporter.lua
+
+      - name: Publish validated source changes
+        run: |
+          rm tools/apply_mobile_direct_required_import.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "mobile: stream raw required imports directly from document pickers"
+          git push origin HEAD:fix/mobile-required-import-streaming-v2
