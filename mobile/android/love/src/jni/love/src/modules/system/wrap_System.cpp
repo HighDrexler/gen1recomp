@@ -101,7 +101,8 @@ int w_vibrate(lua_State *L)
 int w_pickFile(lua_State *L)
 {
 	const char *kind = luaL_optstring(L, 1, nullptr);
-	luax_pushboolean(L, instance()->pickFile(kind));
+	const char *destination = luaL_optstring(L, 2, nullptr);
+	luax_pushboolean(L, instance()->pickFile(kind, destination));
 	return 1;
 }
 
@@ -129,6 +130,13 @@ int w_restartApp(lua_State *L)
 	// Does not return on success: GameActivity.restartApp exits the process
 	// after scheduling the relaunch (#575).
 	luax_pushboolean(L, instance()->restartApp());
+	return 1;
+}
+
+int w_installApk(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+	luax_pushboolean(L, instance()->installApk(path));
 	return 1;
 }
 
@@ -325,6 +333,7 @@ static const luaL_Reg functions[] =
 	{ "createFile", w_createFile },
 	{ "syncHealthSteps", w_syncHealthSteps },
 	{ "restartApp", w_restartApp },
+	{ "installApk", w_installApk },
 	{ "updateShortcuts", w_updateShortcuts },
 	{ "getLaunchGame", w_getLaunchGame },
 	{ "httpDownload", w_httpDownload },

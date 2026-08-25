@@ -24,7 +24,7 @@ The short version, for an author deciding what to write:
   merged.** The write is taken, dropped, and named once per mod in the same
   error feed the mod manager shows -- in both directions, so a Red boot writing
   to `decorations` is told exactly as a Gold boot writing to `map_scripts` is.
-- **40 event names and 43 hook names have a call site in both generations**, so
+- **40 event names and 44 hook names have a call site in both generations**, so
   one subscription serves both games. `tests/engine/gate_gen2_mod_api.lua`
   reads those names back out of the source and fails if a site is renamed or
   deleted on either side, and fails again if a new shared site appears without
@@ -55,10 +55,10 @@ The short version, for an author deciding what to write:
 ```
 
 `games` is an optional array of version ids (`"red"`, `"blue"`, `"yellow"`,
-`"gold"`, `"silver"`), generations (`"gen1"`, `"gen2"`, case-insensitive) or
-`"all"`. `src/mods/ModTargets.lua` resolves the tokens off `GameVersion.ORDER`
-and `GameVersion.generation`, so nothing anywhere restates the game list.
-`"gen2"` now expands to both Gold and Silver.
+`"gold"`, `"silver"`, `"crystal"`), generations (`"gen1"`, `"gen2"`,
+case-insensitive) or `"all"`. `src/mods/ModTargets.lua` resolves the tokens off
+`GameVersion.ORDER` and `GameVersion.generation`, so nothing anywhere restates
+the game list. `"gen2"` now expands to Gold, Silver and Crystal.
 `Manifest.validate` stores the resolved, ORDER-sorted ids on `manifest.games`
 and **derives** `manifest.gen2compat` from them, which is the one field the
 loader's gate reads.
@@ -469,8 +469,11 @@ is warned once per name and the rest of the list still runs. The engine's own
 Gen 1 verbs are **not** seeded on Gold: a row-list verb handed Gold's ctx would
 find no runner on it, so `data.commands` under Gen 2 is the mod verbs alone.
 
-**`mod.save`, `mod.options`, `mod.log`, `mod.assets`, `mod.find`, exports.**
-Generation-agnostic; nothing to adapt.
+**`mod.save`, `mod.options`, `mod.log`, `mod.assets`, `mod.find`,
+`mod.developer`, exports.** Generation-agnostic; nothing to adapt.
+`mod.developer` is the same fixed boot-time boolean on both generations and is
+available while the entry chunk runs. Gold does not gain Gen 1's developer
+console or F5 hot-reload hotkey; the field reports the loader's mode only.
 
 **`mod.world`.** Same method set, resolved against Gold's world
 (`src/world/gen2/WorldAPI.lua`). Two differences show through and are
@@ -539,7 +542,8 @@ gains a field instead of the name gaining a prefix.
   `battle.damage_dealt`, `battle.fainted`, `battle.status_inflicted`,
   `battle.battler_switched`, `battle.ball_thrown`, `battle.exp_gained`,
   `pokemon.level_up`, `pokemon.move_learned`; hooks `battle.damage`,
-  `battle.crit`, `battle.accuracy`, `battle.turn_order`,
+  `battle.crit`, `battle.accuracy`, `battle.charge_required`,
+  `battle.turn_order`,
   `battle.enemy_action`, `battle.run`, `battle.exp_award`, `exp.gain`,
   `catch.rate`, `trainer.party`, `battle.overlay`, `battle.low_health_alarm`,
   `battle.catch_exp`, `battle.bottom_ui_visible`,
@@ -549,6 +553,17 @@ gains a field instead of the name gaining a prefix.
   screen has no `.data` field, so the Gen 2 site **adds** `ctx.data` beside the
   Gen 1 keys. A mod that calls `nextFn` is unaffected; one that reaches through
   `ctx.battle.data` instead gets nil on Gold.
+  `battle.exp_award`'s `ctx.applyShare(mon, split, announce)` reads its third
+  argument on both generations: truthy prints the mon's GainedText, falsy pays
+  it silently, so one mod source can print a single summary line for a
+  party-wide award instead of a box per recipient. Gold honours it **only when
+  it is passed**, by argument count -- `applyShare(mon, split)` was written
+  against a seam that always announced on Gold and keeps announcing there,
+  while `applyShare(mon, split, nil)` is silent on both. Pass the argument
+  explicitly and the two generations agree; omit it and Gen 1 stays silent
+  where Gold speaks. Only the line is affected: the exp, the stat exp,
+  `battle.exp_gained`, the level-up line, learned moves and the forget prompt
+  happen either way.
 - *The catch and the evolution:* `pokemon.caught`, `pokemon.evolved`; hook
   `evolution.check`. `src/ui/gen2/BattleState.lua:pushCaught` emits
   `pokemon.caught` once the mon is in the party or the box, and
@@ -561,7 +576,7 @@ gains a field instead of the name gaining a prefix.
   at the same moment `src/core/Game.lua` and `src/render/Renderer.lua` raise it
   -- the logic tick before the pad is read, a pointer the touch overlay gets
   first refusal on, the palette zone list handed to the present pass, the
-  composed frame before GBCFX, the letterbox, and the finished playfield rect
+  composed frame before ShaderFX, the letterbox, and the finished playfield rect
   -- and carries the same payload.
   `render.hud`'s `gameX` / `gameY` really is where Gold's dialogue boxes and
   menus land, because `Chrome.fitScale` / `fitOrigin` and `World:fitScale`
@@ -771,6 +786,9 @@ name and the existing payload, plus fields where Gen 2 genuinely carries more
 
 The list is much shorter than it was. What is outstanding, in descending value:
 
+- `battle.field_residual`: the first guarded call site is in Gen 1 end-of-round
+  processing. Gold already has a native weather/between-turn pipeline but does
+  not yet expose the shared data-only descriptor hook.
 - `trainer.before_battle`: Gold constructs and pushes its trainer battle in
   `src/world/gen2/World.lua:startBattle`, which does not yet expose a deferred
   preparation boundary or a battle-local player-party view. Gen 1 mods can use

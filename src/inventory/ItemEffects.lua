@@ -93,6 +93,12 @@ function ItemEffects.healsHP(id)
       or id == "REVIVE" or id == "MAX_REVIVE"
 end
 
+-- .useRareCandy prints over the still-drawn party menu
+-- (engine/items/item_effects.asm:1392-1418)
+function ItemEffects.keepsPartyMenuOpen(id)
+  return ItemEffects.healsHP(id) or id == "RARE_CANDY"
+end
+
 function ItemEffects.isBattleMedicine(id)
   return HEAL_AMOUNT[id] ~= nil or STATUS_HEAL[id] ~= nil
       or id == "MAX_POTION" or id == "FULL_RESTORE"
@@ -304,6 +310,11 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
           "Nothing happened!") }
       end
       b.stages[stat] = cur + 1
+      b.hazeStatReset = nil
+      if battle.ruleset and battle.ruleset.badgeBoostReapplyBug
+         and battle.kind ~= "link" then
+        require("src.battle.Damage").reapplyBadgeBoosts(b, stat)
+      end
       return "consumed", { Strings("%s's\n%s rose!", b.name, Strings(STAT_LABEL[stat])) }
     end
     -- ItemUseDireHit/ItemUseGuardSpec always set the bit and consume

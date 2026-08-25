@@ -88,8 +88,13 @@ check(destroy < destroyTeardown and destroyTeardown < destroySuper,
 local mainFile = assert(io.open("main.lua", "rb"))
 local main = mainFile:read("*a")
 mainFile:close()
-check(main:find('require("src.render.SecondScreen").setEnabled(false)', 1, true),
-  "returning from a game disables mod-owned secondary output")
+check(main:find("SessionLifecycle.endGameSession", 1, true),
+  "returning from a game goes through SessionLifecycle.endGameSession")
+local lifecycleFile = assert(io.open("src/core/SessionLifecycle.lua", "rb"))
+local lifecycle = lifecycleFile:read("*a")
+lifecycleFile:close()
+check(lifecycle:find('require("src.render.SecondScreen").setEnabled(false)', 1, true),
+  "endGameSession disables mod-owned secondary output")
 
 check(not source:lower():find("openxr", 1, true),
   "generic Android activity must not require OpenXR")
@@ -113,8 +118,13 @@ local systemFile = assert(io.open(systemPath, "rb"))
 local system = systemFile:read("*a")
 systemFile:close()
 check(system:find('strcmp(kind, "required_import")', 1, true)
-    and system:find('dest = "picked_required_import.bin"', 1, true)
+    and system:find('destination != nullptr', 1, true)
+    and system:find('"picked_required_import.bin"', 1, true)
     and system:find('return "rom,mod,sav,required_import"', 1, true),
   "native Android bridge advertises and routes required imports")
+check(source:find('normalized.startsWith("mods/")', 1, true)
+    and source:find('/baseroms/', 1, true)
+    and source:find('PICK_COMPLETE_FILENAME', 1, true),
+  "direct required imports stay inside mod baseroms and publish completion")
 
 print("android_host_extension_test: ok")

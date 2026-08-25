@@ -240,7 +240,7 @@ local function stepGate(opts)
     push(game, text(game)[opts.text] or opts.fallback, function()
       ow.player.facing = opts.push
       if not ow:checkLedgeHop(opts.push) then
-        ow:scriptMove(ow.player, opts.push, 1)
+        ow:scriptMove(ow.player, opts.push, 1, nil, { collide = true })
       end
     end)
     return true
@@ -647,27 +647,29 @@ end
 local rocketRows = {
   { "face_player" },                                           -- 1
   { "check_flag", "EVENT_GOT_TM28" },                          -- 2
-  { "jump_if_true", 15 },                                      -- 3 → CeruleanHideRocket
+  { "jump_if_true", 16 },                                      -- 3 → CeruleanHideRocket
   { "check_flag", "EVENT_BEAT_CERULEAN_ROCKET_THIEF" },        -- 4
-  { "jump_if_true", 9 },                                       -- 5
+  { "jump_if_true", 10 },                                      -- 5
   { "show_text", "_CeruleanCityRocketText" },                  -- 6
-  { "start_battle", "trainer", "OPP_ROCKET", 5 },              -- 7
-  { "jump_if_false", "end" },                                  -- 8
-  { "show_text", "_CeruleanCityRocketIllReturnTheTMText" },    -- 9
-  { "set_flag", "EVENT_BEAT_CERULEAN_ROCKET_THIEF" },          -- 10
-  { "give_item", "TM_DIG", 1, false },                         -- 11 (row 13 prints)
-  { "set_flag", "EVENT_GOT_TM28" },                            -- 12
-  { "show_text", "_CeruleanCityRocketReceivedTM28Text" },      -- 13
-  { "show_text", "_CeruleanCityRocketIBetterGetMovingText" },  -- 14
-  { "fade", "out" },                                           -- 15 GBFadeOutToBlack
+  -- scripts/CeruleanCity.asm:297 SaveEndBattleTextPointers
+  { "save_end_battle_text", "_CeruleanCityRocketIGiveUpText" }, -- 7
+  { "start_battle", "trainer", "OPP_ROCKET", 5 },              -- 8
+  { "jump_if_false", "end" },                                  -- 9
+  { "show_text", "_CeruleanCityRocketIllReturnTheTMText" },    -- 10
+  { "set_flag", "EVENT_BEAT_CERULEAN_ROCKET_THIEF" },          -- 11
+  { "give_item", "TM_DIG", 1, false },                         -- 12 (row 14 prints)
+  { "set_flag", "EVENT_GOT_TM28" },                            -- 13
+  { "show_text", "_CeruleanCityRocketReceivedTM28Text" },      -- 14
+  { "show_text", "_CeruleanCityRocketIBetterGetMovingText" },  -- 15
+  { "fade", "out" },                                           -- 16 GBFadeOutToBlack
   -- CeruleanHideRocket while black: GUARD1 (28,12) appears, GUARD2
   -- (27,12) and the ROCKET go.  GUARD2 blocks the trashed-house south
   -- door neighbour -- the swap reconnects the city (Bill's ticket does
   -- the same in story.lua; either route is enough).
-  { "show_object", "CERULEAN_CITY", "CERULEANCITY_GUARD1" },   -- 16
-  { "hide_object", "CERULEAN_CITY", "CERULEANCITY_GUARD2" },   -- 17
-  { "hide_object", "CERULEAN_CITY", "CERULEANCITY_ROCKET" },   -- 18
-  { "fade", "in" },                                            -- 19 GBFadeInFromBlack
+  { "show_object", "CERULEAN_CITY", "CERULEANCITY_GUARD1" },   -- 17
+  { "hide_object", "CERULEAN_CITY", "CERULEANCITY_GUARD2" },   -- 18
+  { "hide_object", "CERULEAN_CITY", "CERULEANCITY_ROCKET" },   -- 19
+  { "fade", "in" },                                            -- 20 GBFadeInFromBlack
 }
 
 M.CERULEAN_CITY = {
@@ -818,7 +820,8 @@ M.PEWTER_POKECENTER = {
 -- on the west-side cells and walks you back
 local function bikeGateGuard(coords, stopText, explainText)
   return function(game, ow, x, y)
-    if game.save.inventory.BICYCLE then return false end
+    local bike = game.save.inventory.BICYCLE
+    if bike and bike ~= 0 then return false end
     if not inCoords(coords, x, y) then return false end
     -- walk the player up to the tile beside the counter, no further:
     -- (matchedY - closestY) tiles, 0 when already next to it
@@ -840,10 +843,10 @@ local function bikeGateGuard(coords, stopText, explainText)
         -- (PlayerMovingRightScript). Without it the player was left
         -- parked beside the guard's counter with no way past. #518
         local function shoveRight()
-          ow:scriptMove(ow.player, "right", 1)
+          ow:scriptMove(ow.player, "right", 1, nil, { collide = true })
         end
         if dist > 0 then
-          ow:scriptMove(ow.player, "up", dist, shoveRight)
+          ow:scriptMove(ow.player, "up", dist, shoveRight, { collide = true })
         else
           shoveRight()
         end
@@ -919,10 +922,12 @@ M.SS_ANNE_2F = {
       { "move_npc_to", 2, 36, onLeft and 7 or 8 },             -- 2
       { "face_object", 2, onLeft and "down" or "right" },      -- 3
       { "show_text", "_SSAnne2FRivalText" },                   -- 4
-      { "rival_battle", "OPP_RIVAL2", 1 },                     -- 5
-      { "jump_if_false", 13 },                                 -- 6
-      { "set_flag", "EVENT_BEAT_SS_ANNE_RIVAL" },              -- 7
-      { "show_text", "_SSAnne2FRivalDefeatedText" },           -- 8
+      -- SSAnne2FRivalText's text_asm arms SaveEndBattleTextPointers
+      -- (scripts/SSAnne2F.asm:199), so the line prints in battle (#1688)
+      { "save_end_battle_text", "_SSAnne2FRivalDefeatedText" }, -- 5
+      { "rival_battle", "OPP_RIVAL2", 1 },                     -- 6
+      { "jump_if_false", 13 },                                 -- 7
+      { "set_flag", "EVENT_BEAT_SS_ANNE_RIVAL" },              -- 8
       { "show_text", "_SSAnne2FRivalCutMasterText" },          -- 9
       { "play_music", "Music_MeetRival", { start = "rival" } }, -- 10
       { "walk_npc", 2, ssAnne2FRivalExitDirs(onLeft) },        -- 11

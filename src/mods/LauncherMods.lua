@@ -471,6 +471,20 @@ discover = function()
   return out
 end
 
+-- installedVersions() -> id -> installed version.  MOD INDEX only needs to
+-- know whether a listing is already present; it does not need enablement,
+-- dependency/conflict status, required-import validation, or migration.  Keep
+-- that cheap read separate from list(), whose richer work belongs to MODS.
+function LauncherMods.installedVersions()
+  local out = {}
+  local ok, manifests = pcall(discover)
+  if not ok then return out end
+  for _, manifest in ipairs(manifests or {}) do
+    out[manifest.id] = manifest.version or true
+  end
+  return out
+end
+
 -- list([version]) -> the mods-panel rows for the current install.  Reads the
 -- same enable-state the loader persists, so a toggle here is what the game
 -- sees on its next boot; `version` narrows that to one game's answers.
@@ -598,6 +612,33 @@ function LauncherMods.setEnabled(id, enabled, version)
   local options = SaveData.loadOptions()
   if SaveData.isSafeMode(options) then return false end
   SaveData.setModEnabled(options, id, enabled, SaveData.modScope(version))
+  SaveData.saveOptions(options)
+  LauncherMods.syncActiveProfile(options)
+  return true
+end
+
+function LauncherMods.modOptions()
+  local ok, options = pcall(SaveData.loadOptions)
+  if not ok or type(options) ~= "table" then return {} end
+  return options.modOptions or {}
+end
+
+function LauncherMods.setModOptions(id, values)
+  if type(id) ~= "string" or id == "" or type(values) ~= "table" then
+    return false
+  end
+  local options = SaveData.loadOptions()
+  if SaveData.isSafeMode(options) then return false end
+  options.modOptions = options.modOptions or {}
+  local bucket = options.modOptions[id] or {}
+  for key, value in pairs(values) do
+    local t = type(value)
+    if type(key) == "string" and key ~= ""
+        and (t == "string" or t == "number" or t == "boolean") then
+      bucket[key] = value
+    end
+  end
+  options.modOptions[id] = bucket
   SaveData.saveOptions(options)
   LauncherMods.syncActiveProfile(options)
   return true

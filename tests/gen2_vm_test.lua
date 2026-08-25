@@ -89,6 +89,60 @@ for _, row in ipairs(log) do
 end
 check(gotText, "getmonname filled STRBUF in received text")
 
+-- givepoke's trainer arm (#1569): Script_givepoke (engine/overworld/
+-- scripting.asm:1817-1824), GivePoke (engine/pokemon/move_mon.asm:1695-1736)
+do
+  local given, asked = nil, false
+  local kenyaVm = Vm.new({ generation = 2,
+    ["s:randy"] = {
+      { op = "givepoke", species = 21, level = 10, item = 0, trainer = 1,
+        name = "KENYA", otName = "RANDY" },
+      { op = "end" },
+    },
+  }, {}, Events.new(), {
+    givePoke = function(species, level, item, opts)
+      given = { species = species, level = level, opts = opts }
+      return { species = "SPEAROW" }
+    end,
+    askNickname = function() asked = true end,
+  })
+  check(kenyaVm:start("s:randy"), "Randy's script starts")
+  for _ = 1, 10 do kenyaVm:update() end
+  check(given ~= nil, "the gift reaches givePoke")
+  check(given.opts ~= nil, "the trainer arm carries the two names")
+  eq(given.opts.nickname, "KENYA", "the nickname is the script's own")
+  eq(given.opts.otName, "RANDY", "and so is the OT name")
+  check(not asked, "no nickname prompt on the trainer arm")
+end
+
+-- Every other givepoke in the game is the flag-FALSE form: no names, and the
+-- nickname prompt still runs (engine/pokemon/move_mon.asm:1753-1757).
+do
+  local given, asked = nil, false
+  local plainVm = Vm.new({ generation = 2,
+    ["s:eevee"] = {
+      { op = "givepoke", species = 133, level = 20, item = 0, trainer = 0 },
+      { op = "end" },
+    },
+  }, {}, Events.new(), {
+    givePoke = function(species, level, item, opts)
+      given = { opts = opts }
+      return { species = "EEVEE" }
+    end,
+    showText = function(_, onDone) onDone() end,
+    -- GiveANickname_YesNo (move_mon.asm:1753-1757): the prompt's yes/no
+    yesorno = function(onChoose)
+      asked = true
+      onChoose(false)
+    end,
+  })
+  plainVm:start("s:eevee")
+  for _ = 1, 10 do plainVm:update() end
+  check(given ~= nil and given.opts == nil,
+    "the flag-FALSE form hands givePoke no names")
+  check(asked, "and the nickname prompt still runs on it")
+end
+
 -- Phone + verbosegiveitem (Elm directions / aide potion)
 local phone = {}
 local bag = {}
@@ -1714,8 +1768,10 @@ end
 -- Shuckle you caught yourself is the thing the routine refuses.
 do
   local list = {}
+  local record = { party = list }
   local vm = specialVm(0, { order = { "x" }, hooks = {
     party = function() return list end,
+    save = function() return record end,
     data = function()
       return { pokemon = { SHUCKLE = { name = "SHUCKLE", index = 213,
         growthRate = "MEDIUM_FAST",
@@ -1731,6 +1787,9 @@ do
   eq(list[1].otId, Specials.MANIA_OT_ID, "with MANIA's trainer ID")
   eq(list[1].item, "BERRY", "holding a BERRY")
   eq(list[1].level, 15, "at level 15")
+  local dex = record.pokedex or {}
+  eq((dex.seen or {}).SHUCKLE, true, "seen in the #DEX")
+  eq((dex.caught or {}).SHUCKLE, true, "and caught in the #DEX")
 
   local hooks2 = { party = function() return list end,
     selectPartyMon = function(_, done) done(1, list[1]) end }
@@ -2303,9 +2362,11 @@ check(Specials.STUBS.PhotoStudio == nil,
   "PhotoStudio is a HANDLER now: the conversation and the portrait card exist")
 check(Specials.HANDLERS.PhotoStudio ~= nil,
   "and it is the one that special dispatch resolves to")
-check(Specials.STUBS.PrintDiploma ~= nil,
-  "PrintDiploma stays stubbed -- it is nothing but the print, with no screen "
-  .. "half of its own")
+check(Specials.STUBS.PrintDiploma == nil
+  and Specials.HANDLERS.PrintDiploma ~= nil,
+  "PrintDiploma is a handler now: _PrintDiploma opens on the very page "
+  .. "`special Diploma` shows (engine/printer/printer.asm:382) and only the "
+  .. "two SendScreenToPrinter passes wanted a printer")
 check(Specials.STUBS.UnownPrinter == nil
   and Specials.HANDLERS.UnownPrinter ~= nil,
   "UnownPrinter is a handler for the same reason this one is: the stamp "

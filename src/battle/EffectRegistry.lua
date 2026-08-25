@@ -108,12 +108,16 @@ end
 
 -- The damaging pipeline, extracted from the performMove monolith: every
 -- stage keeps the original's exact check order and rng consumption
--- (invulnerability -> gate -> hit count -> pre-accuracy -> accuracy ->
+-- (pre-accuracy -> invulnerability -> gate -> hit count -> accuracy ->
 -- damage choice -> hits -> messages -> after-damage -> secondary run).
 function EffectRegistry.runDamaging(battle, ctx, record)
   local user, target = ctx.user, ctx.target
   local move, moveInst = ctx.move, ctx.moveInst
   local neverMiss = record and record.neverMiss
+
+  -- SpecialEffectsCont's JumpMoveEffect (core.asm:3129-3133) runs before
+  -- MoveHitTest's INVULNERABLE test (:3150), mid-Fly/Dig included (#1565)
+  if record and record.beforeAccuracy then record.beforeAccuracy(ctx) end
 
   -- Swift ignores semi-invulnerability (MoveHitTest returns hit for
   -- SWIFT_EFFECT before the INVULNERABLE check)
@@ -142,8 +146,6 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   end
 
   local hits = hitCount(ctx, record)
-
-  if record and record.beforeAccuracy then record.beforeAccuracy(ctx) end
 
   if not neverMiss then
     if not battle:accuracyRoll(move, user, target) then
@@ -221,7 +223,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- replay PlayMoveAnimation per strike (pokered: GetPlayerAnimationType
   -- / GetEnemyAnimationType loop on wNumAttacksLeft); hit 1 reuses the
   -- announcement-time moveAnimRow, later hits queue fresh anim rows.
-  -- Thrash/rage continuations have no announcement anim -- a bare
+  -- Mimic queues no announcement anim (announceAnim = false) -- a bare
   -- hitRow carries the blink instead.
   -- PlayApplyingAttackSound (engine/battle/animations.asm, the routine after
   -- PlayApplyingAttackAnimation) picks the sound off wDamageMultipliers -- 10
@@ -258,6 +260,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
 
   local totalDealt = 0
   local landed, brokeSub = 0, false
+  local critPending, ohkoPending = info.crit, info.ohko
   for h = 1, hits do
     if target.mon.hp <= 0 then break end
     local hitRow
@@ -278,12 +281,16 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     totalDealt = totalDealt + dealt
     landed = h
     if dealt > 0 then hitRow.hit = hitFx end
-    -- PrintCriticalOHKOText + DisplayEffectiveness run inside the
-    -- multi-hit loop (core.asm .moveDidNotMiss before the jump back
-    -- to GetPlayerAnimationType), so crit/effectiveness reprint on
-    -- every strike -- damage was only rolled once
-    if info.crit then battle:sayNext(romText(battle.data, "_CriticalHitText", "Critical hit!")) end
-    if info.ohko then battle:sayNext(romText(battle.data, "_OHKOText", "One-hit KO!")) end
+    -- PrintCriticalOHKOText zeroes wCriticalHitOrOHKO after printing
+    -- (core.asm:3809-3811); DisplayEffectiveness re-reads its own flag (#1720)
+    if critPending then
+      battle:sayNext(romText(battle.data, "_CriticalHitText", "Critical hit!"))
+      critPending = false
+    end
+    if ohkoPending then
+      battle:sayNext(romText(battle.data, "_OHKOText", "One-hit KO!"))
+      ohkoPending = false
+    end
     -- PrintCriticalOHKOText closes with `ld c, 20 / jp DelayFrames` at its
     -- .done label (core.asm:3812-3814) -- and the no-crit path jumps to that
     -- same label (:3799), so this hold is paid on EVERY landed hit, not just
@@ -321,6 +328,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- post-damage effect bookkeeping (recoil/drain/trap/thrash/...)
   ctx.rawDamage, ctx.totalDealt = dmg, totalDealt
   ctx.brokeSub, ctx.hits = brokeSub, hits
+  ctx.hitSfx = hitSfx
   if record and record.afterDamage then
     record.afterDamage(ctx, totalDealt)
   elseif moveInst.struggle then

@@ -154,8 +154,14 @@ local function newSfxSource(data, key, def, pitch, tempo, plain)
   return newFileSource(def)
 end
 
+local function deviceSuspended()
+  local ChipAudio = package.loaded["src.core.ChipAudio"]
+  return ChipAudio ~= nil and ChipAudio.isSuspended()
+end
+
 local function playPath(data, key, def, pitch, tempo, plain)
   if not love.audio or not def then return nil end
+  if deviceSuspended() then return nil end
   local src = cache[key]
   if src == false then return nil end -- known bad, already logged
   if not src then
@@ -355,6 +361,21 @@ function Sound.sfxBusy()
     return false
   end
   return true
+end
+
+-- WaitSFX (home/audio.asm), the drain above GiveItemScript's `specialsound`
+-- (engine/overworld/scripting.asm:445), so ch5-ch8 are free for it (#1483).
+function Sound.waitSfxDone()
+  if not curSfx then return end
+  pcall(curSfx.src.stop, curSfx.src)
+  curSfx = nil
+end
+
+-- SFXChannelsOff (home/audio.asm:545)
+function Sound.sfxChannelsOff()
+  if not curSfx then return end
+  pcall(curSfx.src.stop, curSfx.src)
+  curSfx = nil
 end
 
 local function startSfx(data, name, def)
@@ -602,6 +623,7 @@ end
 -- cache carries no clips (Red/Blue) or headless.
 function Sound.playPikaCry(data, n)
   if not love.audio then return nil end
+  if deviceSuspended() then return nil end
   local count = data.audio and data.audio.pikaCries
   if not count then return nil end
   n = math.max(1, math.min(count, n or 1))
@@ -633,6 +655,7 @@ end
 -- like the original's PlayCry -> WaitForSoundToFinish can poll it
 function Sound.playCry(data, species, pikaClip)
   if not love.audio then return nil end
+  if deviceSuspended() then return nil end
   -- Yellow voices every Pikachu cry with the PCM clips (the chip cry is
   -- never used for the species there).  Which clip is a property of the
   -- call site in the original -- every caller of PlayPikachuSoundClip sets
