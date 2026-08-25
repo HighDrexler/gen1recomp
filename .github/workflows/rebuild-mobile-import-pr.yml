@@ -1,0 +1,80 @@
+name: rebuild mobile import PR
+
+on:
+  push:
+    branches: [fix/mobile-required-import-streaming-rebuild]
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Rebuild patch on current upstream base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "HighDrexler"
+          git config user.email "314511375+HighDrexler@users.noreply.github.com"
+          git fetch origin fix/mobile-required-import-streaming-v2
+          old=origin/fix/mobile-required-import-streaming-v2
+          base="$(git merge-base HEAD "$old")"
+
+          merge_file() {
+            local file="$1" key
+            key="$(printf '%s' "$file" | tr '/.' '__')"
+            git show "$base:$file" > "/tmp/${key}.base"
+            git show "$old:$file" > "/tmp/${key}.old"
+            git merge-file "$file" "/tmp/${key}.base" "/tmp/${key}.old"
+          }
+
+          # Every touched file is three-way merged. This preserves current dev
+          # changes (including Android updater/host work) while applying only
+          # the old branch's required-import side of each file.
+          for file in \
+            mobile/android/love/src/jni/love/src/modules/system/System.cpp \
+            mobile/android/love/src/jni/love/src/modules/system/System.h \
+            mobile/android/love/src/jni/love/src/modules/system/wrap_System.cpp \
+            mobile/android/love/src/main/java/org/love2d/android/GameActivity.java \
+            mobile/ios/native/GRPickerBridge.swift \
+            mobile/ios/patch_love_src.py \
+            src/import/RomImporter.lua \
+            tests/rom_importer_android_mod_pick_test.lua
+          do
+            merge_file "$file"
+          done
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/import/RomImporter.lua')
+          s = p.read_text()
+          old = '''local function directRequiredImportTarget(self, marker)\n  local version, path, digest, count = tostring(marker):match(\n    "^(v1)[\\r\\n]+([^\\r\\n]+)[\\r\\n]+([0-9a-fA-F]+)[\\r\\n]+(%d+)[\\r\\n]*$")\n  if version ~= "v1" or not path or not digest or not count or #digest ~= 32 then\n'''
+          new = '''local function directRequiredImportTarget(self, marker)\n  local fields = {}\n  for line in tostring(marker or ""):gmatch("[^\\r\\n]+") do\n    fields[#fields + 1] = line\n    if #fields > 4 then break end\n  end\n  local version, path, digest, count = fields[1], fields[2], fields[3], fields[4]\n  if version ~= "v1" or not path or not digest or not count or #digest ~= 32\n      or not digest:match("^%x+$") or not count:match("^%d+$") then\n'''
+          if old not in s:
+              raise SystemExit('completion-marker parser block not found after merge')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('tests/engine/android_host_extension_test.lua')
+          s = p.read_text()
+          old = '''check(system:find('strcmp(kind, "required_import")', 1, true)\n    and system:find('dest = "picked_required_import.bin"', 1, true)\n    and system:find('return "rom,mod,sav,required_import"', 1, true),\n  "native Android bridge advertises and routes required imports")\n'''
+          new = '''check(system:find('strcmp(kind, "required_import")', 1, true)\n    and system:find('destination != nullptr', 1, true)\n    and system:find('"picked_required_import.bin"', 1, true)\n    and system:find('return "rom,mod,sav,required_import"', 1, true),\n  "native Android bridge advertises and routes required imports")\ncheck(source:find('normalized.startsWith("mods/")', 1, true)\n    and source:find('/baseroms/', 1, true)\n    and source:find('PICK_COMPLETE_FILENAME', 1, true),\n  "direct required imports stay inside mod baseroms and publish completion")\n'''
+          if old not in s:
+              raise SystemExit('Android host assertion block not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+          rm -f .github/workflows/rebuild-mobile-import-pr.yml
+          git diff --check
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y luajit >/dev/null
+          python3 -m pip install --quiet --upgrade pillow
+          ./scripts/test.sh
+
+          git add -A
+          git commit -m "fix: stream large required imports on mobile"
+          git push origin HEAD:fix/mobile-required-import-streaming-rebuild
