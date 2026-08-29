@@ -65,12 +65,15 @@ function fs.remove() return true end
 local manifest = {
   path = "mods/cbe",
   required_imports = { {
-    id = "disc", file = "disc.iso", format = "gamecube",
+    -- Keep the existing raw vocabulary so the same mod manifest still loads on
+    -- older engines. The extra gamecube_* fields opt into structural identity
+    -- on engines that support it.
+    id = "disc", file = "disc.iso", format = "raw",
     max_size = logicalSize,
     gamecube_disc_ids = { "GC6E01" }, gamecube_revisions = { 0 },
     gamecube_logical_size = logicalSize,
-    -- Deliberately does not match the physical CISO: structural identity is
-    -- the compatibility contract for a GameCube-format import.
+    -- Deliberately does not match the physical CISO: logical disc structure is
+    -- the compatibility contract for an opted-in GameCube required import.
     md5 = { "00000000000000000000000000000000" },
   } },
 }
