@@ -6,6 +6,60 @@
 local CacheFs = require("src.import.CacheFs")
 local GameCubeRequiredImport = require("src.mods.GameCubeRequiredImport")
 
+-- Manifest v2 predates representation-aware optical imports and intentionally
+-- drops unknown per-import fields. Preserve the GameCube identity metadata
+-- after normal validation while keeping format="raw" valid for older engines.
+-- Loader requires RequiredImports before Manifest, so installing this wrapper
+-- here makes the extra vocabulary available without changing old manifests.
+local Manifest = require("src.mods.Manifest")
+if not Manifest.__gamecubeRequiredImportFields then
+  local originalValidate = Manifest.validate
+  Manifest.validate = function(raw, path)
+    local validated = originalValidate(raw, path)
+    local function copyFields(rawList, parsedList)
+      if type(rawList) ~= "table" or type(parsedList) ~= "table" then return end
+      local byId = {}
+      for _, item in ipairs(rawList) do
+        if type(item) == "table" and type(item.id) == "string" then byId[item.id] = item end
+      end
+      for _, spec in ipairs(parsedList) do
+        local source = type(spec) == "table" and byId[spec.id] or nil
+        if source and (source.gamecube_disc_ids ~= nil or source.gamecube_revisions ~= nil
+            or source.gamecube_logical_size ~= nil) then
+          assert(spec.format == "raw", "GameCube required imports must use raw format")
+          assert(type(source.gamecube_disc_ids) == "table" and #source.gamecube_disc_ids > 0,
+            "GameCube required imports need gamecube_disc_ids")
+          local ids = {}
+          for _, id in ipairs(source.gamecube_disc_ids) do
+            assert(type(id) == "string" and #id == 6 and id:match("^[%w]+$"),
+              "gamecube_disc_ids entries must be six alphanumeric characters")
+            ids[#ids + 1] = id:upper()
+          end
+          local revisions = source.gamecube_revisions or {}
+          assert(type(revisions) == "table", "gamecube_revisions must be an array")
+          local revs = {}
+          for _, rev in ipairs(revisions) do
+            assert(type(rev) == "number" and rev % 1 == 0 and rev >= 0 and rev <= 255,
+              "gamecube_revisions entries must be bytes")
+            revs[#revs + 1] = rev
+          end
+          local logical = source.gamecube_logical_size
+          assert(type(logical) == "number" and logical > 0 and logical % 1 == 0
+              and logical <= 2 * 1024 * 1024 * 1024,
+            "gamecube_logical_size must be a positive integer <= 2 GiB")
+          spec.gamecube_disc_ids = ids
+          spec.gamecube_revisions = revs
+          spec.gamecube_logical_size = logical
+        end
+      end
+    end
+    copyFields(raw and raw.required_imports, validated and validated.required_imports)
+    copyFields(raw and raw.optional_imports, validated and validated.optional_imports)
+    return validated
+  end
+  Manifest.__gamecubeRequiredImportFields = true
+end
+
 local RequiredImports = {}
 
 local function allSpecs(manifest)
@@ -215,7 +269,9 @@ local function clearRemovedMarker(manifest, spec, fs)
 end
 
 local function validateGameCube(manifest, spec, fs, info)
-  if not (spec and spec.format == "gamecube") then return nil, nil, false end
+  if not (spec and type(spec.gamecube_disc_ids) == "table" and #spec.gamecube_disc_ids > 0) then
+    return nil, nil, false
+  end
   local path = RequiredImports.path(manifest, spec)
   local ok, tokenOrErr = GameCubeRequiredImport.validate(fs, path, spec)
   if not ok then return nil, tokenOrErr, true end
@@ -227,9 +283,9 @@ local function validateGameCube(manifest, spec, fs, info)
 end
 
 -- Finalize a caller-streamed import after the destination bytes have already
--- been copied into the engine-owned baseroms path. For format="gamecube" the
--- physical-container MD5 is audit data only: equivalent ISO/CISO encodings are
--- accepted by disc identity + revision + GameCube magic + FST integrity.
+-- been copied into the engine-owned baseroms path. For a GameCube-declared raw
+-- import the physical-container MD5 is audit data only: equivalent ISO/CISO
+-- encodings are accepted by disc identity + revision + GameCube magic + FST.
 function RequiredImports.acceptStoredDigest(manifest, importId, digest, fs)
   fs = fs or (love and love.filesystem)
   local spec = specById(manifest, importId)
