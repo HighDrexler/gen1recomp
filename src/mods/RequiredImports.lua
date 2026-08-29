@@ -4,6 +4,7 @@
 -- mods/<id>/baseroms/ tree, where the existing mod:read sandbox can see them.
 
 local CacheFs = require("src.import.CacheFs")
+local GameCubeRequiredImport = require("src.mods.GameCubeRequiredImport")
 
 local RequiredImports = {}
 
@@ -68,9 +69,8 @@ local function n64KindAt(data, offset)
   return N64_MAGIC[data:sub(offset, offset + 3)]
 end
 
--- Return canonical big-endian N64 bytes.  A 512-byte copier header is
--- recognized only when valid N64 magic follows it, so arbitrary data is never
--- shortened just because its size happens to line up.
+-- Return canonical big-endian N64 bytes. A 512-byte copier header is
+-- recognized only when valid N64 magic follows it.
 function RequiredImports.normalizeN64(data)
   if type(data) ~= "string" then return nil, "selected file could not be read" end
   local offset, kind = 1, n64KindAt(data, 1)
@@ -83,14 +83,12 @@ function RequiredImports.normalizeN64(data)
   end
   data = data:sub(offset)
   if kind == "z64" then return data end
-
   if kind == "v64" then
     if #data % 2 ~= 0 then return nil, "byte-swapped N64 ROM has an odd size" end
     return (data:gsub("(.)(.)", "%2%1"))
-  else
-    if #data % 4 ~= 0 then return nil, "little-endian N64 ROM size is not word aligned" end
-    return (data:gsub("(.)(.)(.)(.)", "%4%3%2%1"))
   end
+  if #data % 4 ~= 0 then return nil, "little-endian N64 ROM size is not word aligned" end
+  return (data:gsub("(.)(.)(.)(.)", "%4%3%2%1"))
 end
 
 function RequiredImports.normalize(spec, data)
@@ -126,7 +124,6 @@ local function specById(manifest, importId)
   end
   return nil
 end
-
 RequiredImports.spec = specById
 
 local function streamDigest(fs, path, chunkBytes)
@@ -161,7 +158,6 @@ end
 local function receiptPath(manifest, spec)
   return manifest.path .. "/baseroms/.required-import-" .. spec.id .. ".validated"
 end
-
 RequiredImports.receiptPath = receiptPath
 
 local function parseReceipt(raw)
@@ -172,8 +168,6 @@ local function parseReceipt(raw)
 end
 
 local function cachedDigest(manifest, spec, fs, info)
-  -- A size alone cannot detect a same-length replacement. Require modtime as
-  -- well; filesystems that do not expose it simply take the safe hash path.
   if not (fs and fs.read and info and info.size and info.modtime) then return nil end
   local digest, size, modtime = parseReceipt(fs.read(receiptPath(manifest, spec)))
   if digest and size == info.size and modtime == info.modtime
@@ -186,8 +180,7 @@ end
 local function writeReceipt(manifest, spec, digest, info, fs)
   if not (digest and info and info.size and info.modtime) then return end
   local path = receiptPath(manifest, spec)
-  local body = ("v1\n%s\n%d\n%s\n")
-    :format(digest, info.size, tostring(info.modtime))
+  local body = ("v1\n%s\n%d\n%s\n"):format(digest, info.size, tostring(info.modtime))
   if love and fs == love.filesystem then
     local savedPrefix = CacheFs.prefix
     CacheFs.prefix = ""
@@ -210,38 +203,64 @@ local function removeReceipt(manifest, spec, fs)
   end
 end
 
+local function clearRemovedMarker(manifest, spec, fs)
+  if love and fs == love.filesystem then
+    local savedPrefix = CacheFs.prefix
+    CacheFs.prefix = ""
+    CacheFs.remove(removedMarker(manifest, spec))
+    CacheFs.prefix = savedPrefix
+  elseif fs and fs.remove then
+    fs.remove(removedMarker(manifest, spec))
+  end
+end
+
+local function validateGameCube(manifest, spec, fs, info)
+  if not (spec and spec.format == "gamecube") then return nil, nil, false end
+  local path = RequiredImports.path(manifest, spec)
+  local ok, tokenOrErr = GameCubeRequiredImport.validate(fs, path, spec)
+  if not ok then return nil, tokenOrErr, true end
+  -- GameCube structural receipts deliberately are not written into the v1 MD5
+  -- receipt format. Header/FST validation is tiny compared with hashing a
+  -- 665 MiB CISO or 1.46 GiB ISO, so re-check it on launcher inspection.
+  removeReceipt(manifest, spec, fs)
+  return true, tokenOrErr, true
+end
+
 -- Finalize a caller-streamed import after the destination bytes have already
--- been copied into the engine-owned baseroms path. This keeps large imports
--- out of a single Lua string while preserving the same size/MD5 receipt rules.
+-- been copied into the engine-owned baseroms path. For format="gamecube" the
+-- physical-container MD5 is audit data only: equivalent ISO/CISO encodings are
+-- accepted by disc identity + revision + GameCube magic + FST integrity.
 function RequiredImports.acceptStoredDigest(manifest, importId, digest, fs)
   fs = fs or (love and love.filesystem)
   local spec = specById(manifest, importId)
   if not spec then return nil, "unknown required import: " .. tostring(importId) end
   digest = tostring(digest or ""):lower()
-  if not accepts(spec, digest) then
-    return nil, ("MD5 mismatch (got %s)"):format(digest ~= "" and digest or "unavailable")
-  end
   local path = RequiredImports.path(manifest, spec)
   local info = fs and fs.getInfo and fs.getInfo(path, "file") or nil
   if not info then return nil, "copied import is missing" end
   local sizeErr = RequiredImports.sizeError(spec, info.size, true)
   if sizeErr then return nil, sizeErr end
+
+  local gcOk, gcDetail, gcHandled = validateGameCube(manifest, spec, fs, info)
+  if gcHandled then
+    if not gcOk then return nil, gcDetail end
+    clearRemovedMarker(manifest, spec, fs)
+    return true, gcDetail
+  end
+
+  if not accepts(spec, digest) then
+    return nil, ("MD5 mismatch (got %s)"):format(digest ~= "" and digest or "unavailable")
+  end
   if love and fs == love.filesystem then
     local savedPrefix = CacheFs.prefix
     local ok, prefixErr = xpcall(function()
       CacheFs.prefix = ""
       CacheFs.remove(removedMarker(manifest, spec))
       CacheFs.prefix = savedPrefix
-      -- writeReceipt has its own temporary CacheFs prefix switch. Keep it
-      -- inside this guard too so a write error cannot leak global state.
       writeReceipt(manifest, spec, digest, info, fs)
-    end, function(err)
-      return tostring(err)
-    end)
+    end, function(err) return tostring(err) end)
     CacheFs.prefix = savedPrefix
-    if not ok then
-      return nil, "could not finalize import receipt: " .. tostring(prefixErr)
-    end
+    if not ok then return nil, "could not finalize import receipt: " .. tostring(prefixErr) end
     return true, digest
   elseif fs and fs.remove then
     fs.remove(removedMarker(manifest, spec))
@@ -250,8 +269,7 @@ function RequiredImports.acceptStoredDigest(manifest, importId, digest, fs)
   return true, digest
 end
 
-
--- Validate bytes against a declaration.  The returned data is canonicalized
+-- Validate bytes against a declaration. The returned data is canonicalized
 -- (notably for N64 byte order/header variants) and is what must be stored.
 function RequiredImports.validateData(spec, data, hashFn)
   local sourceSizeErr = type(data) == "string"
@@ -285,14 +303,18 @@ function RequiredImports.validateStored(manifest, spec, fs, hashFn)
     removeReceipt(manifest, spec, fs)
     return nil, sizeErr
   end
+
+  local gcOk, gcDetail, gcHandled = validateGameCube(manifest, spec, fs, info)
+  if gcHandled then
+    if not gcOk then return nil, gcDetail end
+    return true, gcDetail, false
+  end
+
   local cached = cachedDigest(manifest, spec, fs, info)
   if cached then return true, cached, true end
   removeReceipt(manifest, spec, fs)
-  -- Large raw imports (GameCube discs, future optical images, etc.) must never
-  -- be materialized into one Lua string merely because their validation
-  -- receipt was lost. Stream the MD5 directly from the installed file. N64
-  -- sources stay on the canonicalization path because byte-order/header
-  -- normalization is part of their validation contract.
+  -- Large raw imports must never be materialized into one Lua string merely
+  -- because their validation receipt was lost. Stream their MD5 instead.
   if info.size and info.size > RequiredImports.LARGE_WARN_BYTES
       and spec.format ~= "n64" and fs.newFile then
     local digest, hashErr = streamDigest(fs, path)
